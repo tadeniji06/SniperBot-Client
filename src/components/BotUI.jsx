@@ -9,11 +9,12 @@ const BotUI = () => {
     mintStage: "",
     contractAddress: "",
   });
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
 
   const handleChainChange = (e) => {
     const selectedChain = e.target.value;
     setChain(selectedChain);
-    // Reset formData to remove irrelevant fields
     setFormData({
       privateKey: "",
       collectionId: "",
@@ -21,6 +22,7 @@ const BotUI = () => {
       mintStage: "",
       contractAddress: "",
     });
+    setResult(null);
   };
 
   const handleChange = (e) => {
@@ -30,19 +32,27 @@ const BotUI = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setLoading(true);
+    setResult(null);
 
     try {
-      const res = await fetch("https://your-backend-api.com/mint", {
+      const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/mint`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ chain, ...formData }),
       });
 
       const data = await res.json();
-      alert(`✅ Success: ${data.txHash || "Mint completed"}`);
+      if (data.success) {
+        setResult({ type: "success", txHash: data.txHash });
+      } else {
+        setResult({ type: "error", msg: data.msg || "Something went wrong" });
+      }
     } catch (err) {
       console.error(err);
-      alert("❌ Mint failed. Check console.");
+      setResult({ type: "error", msg: "Network error. Try again." });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -151,9 +161,30 @@ const BotUI = () => {
       <button
         type='submit'
         className='mt-4 w-full bg-black text-white py-2 rounded hover:bg-gray-800 transition'
+        disabled={loading}
       >
-        🔥 Mint Now
+        {loading ? "⏳ Minting..." : "🔥 Mint Now"}
       </button>
+
+      {result && (
+        <div className='text-center mt-4'>
+          {result.type === "success" ? (
+            <div className='text-green-600 font-semibold'>
+              ✅ Success! TX:{" "}
+              <a
+                href={`https://explorer.com/tx/${result.txHash}`}
+                target='_blank'
+                rel='noopener noreferrer'
+                className='underline'
+              >
+                {result.txHash}
+              </a>
+            </div>
+          ) : (
+            <div className='text-red-600 font-semibold'>❌ {result.msg}</div>
+          )}
+        </div>
+      )}
     </form>
   );
 };
