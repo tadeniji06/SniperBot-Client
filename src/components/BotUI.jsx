@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AlertCircle,
   CheckCircle,
@@ -18,28 +18,36 @@ const BotUI = () => {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [validationErrors, setValidationErrors] = useState({});
+  const [scheduleEnabled, setScheduleEnabled] = useState(false);
+  const [scheduleTime, setScheduleTime] = useState("");
+  const [scheduleUnit, setScheduleUnit] = useState("minutes");
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const scheduled = JSON.parse(localStorage.getItem("scheduledMint"));
+      if (scheduled && Date.now() >= scheduled.time && !loading) {
+        setFormData(scheduled.formData);
+        setChain(scheduled.chain);
+        handleSubmit({ preventDefault: () => {} }, true);
+        localStorage.removeItem("scheduledMint");
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [loading]);
 
   const validateForm = () => {
     const errors = {};
-
-    // Private key validation
     if (!formData.privateKey) {
       errors.privateKey = "Private key is required";
     } else if (formData.privateKey.length < 32) {
       errors.privateKey = "Private key appears to be too short";
     }
 
-    // Chain-specific validations
     if (chain === "SUI") {
-      if (!formData.collectionId) {
-        errors.collectionId = "Collection ID is required";
-      }
-      if (!formData.mintStage) {
-        errors.mintStage = "Mint stage is required";
-      }
-      if (formData.mintQuantity < 1 || formData.mintQuantity > 100) {
+      if (!formData.collectionId) errors.collectionId = "Collection ID is required";
+      if (!formData.mintStage) errors.mintStage = "Mint stage is required";
+      if (formData.mintQuantity < 1 || formData.mintQuantity > 100)
         errors.mintQuantity = "Mint quantity must be between 1 and 100";
-      }
     } else {
       if (!formData.contractAddress) {
         errors.contractAddress = "Contract address is required";
@@ -88,19 +96,14 @@ const BotUI = () => {
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
-
-    // Clear validation error for this field when user starts typing
     if (validationErrors[name]) {
       setValidationErrors((prev) => ({ ...prev, [name]: "" }));
     }
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-
-    if (!validateForm()) {
-      return;
-    }
+  const handleSubmit = async (e, autoTriggered = false) => {
+    if (!autoTriggered) e.preventDefault();
+    if (!validateForm()) return;
 
     setLoading(true);
     setResult(null);
@@ -114,17 +117,10 @@ const BotUI = () => {
 
       const data = await res.json();
 
-      if (!res.ok) {
-        throw new Error(data.msg || `HTTP error! status: ${res.status}`);
-      }
+      if (!res.ok) throw new Error(data.msg || `HTTP error! status: ${res.status}`);
 
       if (data.success) {
-        setResult({
-          type: "success",
-          txHash: data.txHash,
-          message: "NFT minted successfully!",
-        });
-        // Clear form on success
+        setResult({ type: "success", txHash: data.txHash, message: "NFT minted successfully!" });
         setFormData({
           privateKey: "",
           collectionId: "",
@@ -133,44 +129,45 @@ const BotUI = () => {
           contractAddress: "",
         });
       } else {
-        setResult({
-          type: "error",
-          message: data.msg || "Minting failed",
-          code: data.code,
-        });
+        setResult({ type: "error", message: data.msg || "Minting failed", code: data.code });
       }
     } catch (err) {
       console.error("Frontend Error:", err);
       let errorMessage = "Network error occurred. Please try again.";
-
       if (err.name === "TypeError" && err.message.includes("fetch")) {
-        errorMessage =
-          "Unable to connect to server. Check your internet connection.";
+        errorMessage = "Unable to connect to server. Check your internet connection.";
       } else if (err.message.includes("timeout")) {
-        errorMessage =
-          "Request timed out. The network might be congested.";
+        errorMessage = "Request timed out. The network might be congested.";
       }
 
-      setResult({
-        type: "error",
-        message: errorMessage,
-      });
+      setResult({ type: "error", message: errorMessage });
     } finally {
       setLoading(false);
     }
   };
 
-  const InputField = ({
-    label,
-    name,
-    type = "text",
-    required = false,
-    placeholder = "",
-  }) => (
+  const handleSchedule = () => {
+    if (!validateForm()) return;
+
+    const delay =
+      Number(scheduleTime) * (scheduleUnit === "minutes" ? 60000 : 3600000);
+
+    const scheduledPayload = {
+      chain,
+      formData,
+      time: Date.now() + delay,
+    };
+
+    localStorage.setItem("scheduledMint", JSON.stringify(scheduledPayload));
+    alert(`Mint scheduled in ${scheduleTime} ${scheduleUnit}`);
+    setScheduleTime("");
+    setScheduleEnabled(false);
+  };
+
+  const InputField = ({ label, name, type = "text", required = false, placeholder = "" }) => (
     <div className='space-y-1'>
       <label className='block font-medium text-gray-700'>
-        {label}
-        {required && <span className='text-red-500 ml-1'>*</span>}
+        {label} {required && <span className='text-red-500'>*</span>}
       </label>
       <input
         type={type}
@@ -178,12 +175,9 @@ const BotUI = () => {
         value={formData[name]}
         onChange={handleChange}
         placeholder={placeholder}
-        className={`w-full p-3 border rounded-lg transition-colors focus:outline-none focus:ring-2 text-black focus:ring-blue-500 ${
-          validationErrors[name]
-            ? "border-red-300 bg-red-50"
-            : "border-gray-300 hover:border-gray-400"
+        className={`w-full p-3 border rounded-lg text-black focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+          validationErrors[name] ? "border-red-300 bg-red-50" : "border-gray-300"
         }`}
-        required={required}
       />
       {validationErrors[name] && (
         <p className='text-red-600 text-sm flex items-center gap-1'>
@@ -197,12 +191,8 @@ const BotUI = () => {
   return (
     <div className='max-w-md mx-auto bg-white rounded-xl shadow-xl p-6 space-y-6'>
       <div className='text-center'>
-        <h2 className='text-2xl font-bold text-gray-800 mb-2'>
-          NFT Minting Bot
-        </h2>
-        <p className='text-gray-600'>
-          Mint NFTs across multiple blockchains
-        </p>
+        <h2 className='text-2xl font-bold text-gray-800 mb-2'>NFT Minting Bot</h2>
+        <p className='text-gray-600'>Mint NFTs across multiple blockchains</p>
       </div>
 
       <div className='space-y-4'>
@@ -214,7 +204,7 @@ const BotUI = () => {
             name='chain'
             value={chain}
             onChange={handleChainChange}
-            className='w-full text-black p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
+            className='w-full text-black p-3 border border-gray-300 rounded-lg'
           >
             <option value='BSC'>Binance Smart Chain (BSC)</option>
             <option value='BASE'>Base Network</option>
@@ -223,34 +213,13 @@ const BotUI = () => {
           </select>
         </div>
 
-        <InputField
-          label='Private Key'
-          name='privateKey'
-          type='password'
-          required
-          placeholder='Enter your private key'
-        />
+        <InputField label='Private Key' name='privateKey' type='password' required placeholder='Enter your private key' />
 
         {chain === "SUI" ? (
           <>
-            <InputField
-              label='Collection ID'
-              name='collectionId'
-              required
-              placeholder='Enter collection ID'
-            />
-            <InputField
-              label='Mint Stage'
-              name='mintStage'
-              required
-              placeholder='e.g., public, whitelist'
-            />
-            <InputField
-              label='Mint Quantity'
-              name='mintQuantity'
-              type='number'
-              required
-            />
+            <InputField label='Collection ID' name='collectionId' required placeholder='Enter collection ID' />
+            <InputField label='Mint Stage' name='mintStage' required placeholder='e.g., public, whitelist' />
+            <InputField label='Mint Quantity' name='mintQuantity' type='number' required />
           </>
         ) : (
           <>
@@ -258,26 +227,49 @@ const BotUI = () => {
               label='Contract Address'
               name='contractAddress'
               required
-              placeholder={
-                chain === "SOL" ? "Solana program address" : "0x..."
-              }
+              placeholder={chain === "SOL" ? "Solana program address" : "0x..."}
             />
-            <InputField
-              label='Mint Quantity'
-              name='mintQuantity'
-              type='number'
-              required
-            />
+            <InputField label='Mint Quantity' name='mintQuantity' type='number' required />
           </>
         )}
 
+        <div className='flex items-center gap-2'>
+          <input
+            type='checkbox'
+            checked={scheduleEnabled}
+            onChange={() => setScheduleEnabled(!scheduleEnabled)}
+          />
+          <label className='text-sm font-medium text-gray-700'>Schedule mint?</label>
+        </div>
+
+        {scheduleEnabled && (
+          <div className='flex items-center gap-3'>
+            <input
+              type='number'
+              min='1'
+              value={scheduleTime}
+              onChange={(e) => setScheduleTime(e.target.value)}
+              placeholder='Time value'
+              className='w-2/3 p-3 border border-gray-300 rounded-lg'
+            />
+            <select
+              value={scheduleUnit}
+              onChange={(e) => setScheduleUnit(e.target.value)}
+              className='w-1/3 p-3 border border-gray-300 rounded-lg text-black'
+            >
+              <option value='minutes'>Minutes</option>
+              <option value='hours'>Hours</option>
+            </select>
+          </div>
+        )}
+
         <button
-          onClick={handleSubmit}
+          onClick={scheduleEnabled ? handleSchedule : handleSubmit}
           disabled={loading}
           className={`w-full py-3 px-4 rounded-lg font-semibold text-white transition-all duration-200 flex items-center justify-center gap-2 ${
             loading
               ? "bg-gray-400 cursor-not-allowed"
-              : "bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
+              : "bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 shadow-lg hover:shadow-xl"
           }`}
         >
           {loading ? (
@@ -286,19 +278,13 @@ const BotUI = () => {
               Minting...
             </>
           ) : (
-            <>🚀 Mint NFT</>
+            scheduleEnabled ? "⏱ Schedule Mint" : "🚀 Mint NFT"
           )}
         </button>
       </div>
 
       {result && (
-        <div
-          className={`p-4 rounded-lg border-l-4 ${
-            result.type === "success"
-              ? "bg-green-50 border-green-400"
-              : "bg-red-50 border-red-400"
-          }`}
-        >
+        <div className={`p-4 rounded-lg border-l-4 ${result.type === "success" ? "bg-green-50 border-green-400" : "bg-red-50 border-red-400"}`}>
           <div className='flex items-start gap-3'>
             {result.type === "success" ? (
               <CheckCircle className='text-green-600 mt-0.5' size={20} />
@@ -306,22 +292,10 @@ const BotUI = () => {
               <AlertCircle className='text-red-600 mt-0.5' size={20} />
             )}
             <div className='flex-1'>
-              <p
-                className={`font-semibold ${
-                  result.type === "success"
-                    ? "text-green-800"
-                    : "text-red-800"
-                }`}
-              >
+              <p className={`font-semibold ${result.type === "success" ? "text-green-800" : "text-red-800"}`}>
                 {result.type === "success" ? "Success!" : "Error"}
               </p>
-              <p
-                className={`text-sm mt-1 ${
-                  result.type === "success"
-                    ? "text-green-700"
-                    : "text-red-700"
-                }`}
-              >
+              <p className={`text-sm mt-1 ${result.type === "success" ? "text-green-700" : "text-red-700"}`}>
                 {result.message || result.msg}
               </p>
               {result.txHash && (
@@ -340,10 +314,7 @@ const BotUI = () => {
       )}
 
       <div className='text-xs text-gray-500 text-center'>
-        <p>
-          ⚠️ Never share your private keys. This bot does not store your
-          credentials.
-        </p>
+        <p>⚠️ Never share your private keys. This bot does not store your credentials.</p>
       </div>
     </div>
   );
