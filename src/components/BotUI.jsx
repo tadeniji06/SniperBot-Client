@@ -250,7 +250,7 @@ const BotUI = () => {
               value={scheduleTime}
               onChange={(e) => setScheduleTime(e.target.value)}
               placeholder='Time value'
-              className='w-2/3 p-3 border border-gray-300 rounded-lg'
+              className='w-2/3 p-3 border border-gray-300 rounded-lg text-black'
             />
             <select
               value={scheduleUnit}
